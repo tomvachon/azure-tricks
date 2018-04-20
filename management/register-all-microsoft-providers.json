@@ -1,0 +1,247 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "logicAppName": {
+            "type": "String",
+            "metadata": {
+                "description": "Name of the logic app."
+            }
+        },
+        "logicAppLocation": {
+            "defaultValue": "[resourceGroup().location]",
+            "allowedValues": [
+                "eastasia",
+                "southeastasia",
+                "centralus",
+                "eastus",
+                "eastus2",
+                "westus",
+                "northcentralus",
+                "southcentralus",
+                "northeurope",
+                "westeurope",
+                "japanwest",
+                "japaneast",
+                "brazilsouth",
+                "australiaeast",
+                "australiasoutheast",
+                "southindia",
+                "centralindia",
+                "westindia",
+                "canadacentral",
+                "canadaeast",
+                "westcentralus",
+                "westus2",
+                "[resourceGroup().location]"
+            ],
+            "type": "String",
+            "metadata": {
+                "description": "Location of the logic app."
+            }
+        },
+        "arm_Connection_Name": {
+            "defaultValue": "arm",
+            "type": "String",
+            "metadata": {
+                "description": "Name of the connection."
+            }
+        }
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Logic/workflows",
+            "name": "[parameters('logicAppName')]",
+            "apiVersion": "2016-06-01",
+            "location": "[parameters('logicAppLocation')]",
+            "properties": {
+                "state": "Disabled",
+                "definition": {
+                    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {
+                        "$connections": {
+                            "defaultValue": {},
+                            "type": "Object"
+                        },
+                        "$authentication": {
+                            "defaultValue": {},
+                            "type": "SecureObject"
+                        }
+                    },
+                    "triggers": {
+                        "Recurrence": {
+                            "recurrence": {
+                                "frequency": "Day",
+                                "interval": 1
+                            },
+                            "type": "Recurrence"
+                        }
+                    },
+                    "actions": {
+                        "List_subscriptions": {
+                            "runAfter": {},
+                            "metadata": {
+                                "flowSystemMetadata": {
+                                    "swaggerOperationId": "Subscriptions_List"
+                                }
+                            },
+                            "type": "ApiConnection",
+                            "inputs": {
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['arm']['connectionId']"
+                                    }
+                                },
+                                "method": "get",
+                                "path": "/subscriptions",
+                                "queries": {
+                                    "x-ms-api-version": "2016-06-01"
+                                },
+                                "authentication": "@parameters('$authentication')"
+                            }
+                        },
+                        "For_each_Subscription": {
+                            "foreach": "@body('List_subscriptions')?['value']",
+                            "actions": {
+                                "List_resource_providers": {
+                                    "runAfter": {},
+                                    "metadata": {
+                                        "flowSystemMetadata": {
+                                            "swaggerOperationId": "Providers_List"
+                                        }
+                                    },
+                                    "type": "ApiConnection",
+                                    "inputs": {
+                                        "host": {
+                                            "connection": {
+                                                "name": "@parameters('$connections')['arm']['connectionId']"
+                                            }
+                                        },
+                                        "method": "get",
+                                        "path": "/subscriptions/@{encodeURIComponent(items('For_each_Subscription')?['subscriptionId'])}/providers",
+                                        "queries": {
+                                            "x-ms-api-version": "2016-06-01"
+                                        },
+                                        "authentication": "@parameters('$authentication')"
+                                    }
+                                },
+                                "For_each_resource": {
+                                    "foreach": "@body('List_resource_providers')?['value']",
+                                    "actions": {
+                                        "Read_resource_provider": {
+                                            "runAfter": {},
+                                            "metadata": {
+                                                "flowSystemMetadata": {
+                                                    "swaggerOperationId": "Providers_Get"
+                                                }
+                                            },
+                                            "type": "ApiConnection",
+                                            "inputs": {
+                                                "host": {
+                                                    "connection": {
+                                                        "name": "@parameters('$connections')['arm']['connectionId']"
+                                                    }
+                                                },
+                                                "method": "get",
+                                                "path": "/subscriptions/@{encodeURIComponent(items('For_each_Subscription')?['subscriptionId'])}/providers/@{encodeURIComponent(items('For_each_resource')?['namespace'])}",
+                                                "queries": {
+                                                    "x-ms-api-version": "2016-06-01"
+                                                },
+                                                "authentication": "@parameters('$authentication')"
+                                            }
+                                        },
+                                        "If_Microsoft_Resource": {
+                                            "actions": {
+                                                "If_not_registered": {
+                                                    "actions": {
+                                                        "Register_resource_provider": {
+                                                            "runAfter": {},
+                                                            "metadata": {
+                                                                "flowSystemMetadata": {
+                                                                    "swaggerOperationId": "Providers_Register"
+                                                                }
+                                                            },
+                                                            "type": "ApiConnection",
+                                                            "inputs": {
+                                                                "host": {
+                                                                    "connection": {
+                                                                        "name": "@parameters('$connections')['arm']['connectionId']"
+                                                                    }
+                                                                },
+                                                                "method": "post",
+                                                                "path": "/subscriptions/@{encodeURIComponent(items('For_each_Subscription')?['subscriptionId'])}/providers/@{encodeURIComponent(body('Read_resource_provider')?['namespace'])}/register",
+                                                                "queries": {
+                                                                    "x-ms-api-version": "2016-06-01"
+                                                                },
+                                                                "authentication": "@parameters('$authentication')"
+                                                            }
+                                                        }
+                                                    },
+                                                    "runAfter": {},
+                                                    "expression": "@equals(body('Read_resource_provider')?['registrationState'], 'NotRegistered')",
+                                                    "type": "If"
+                                                }
+                                            },
+                                            "runAfter": {
+                                                "Read_resource_provider": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "expression": "@startsWith(body('Read_resource_provider')?['namespace'], 'Microsoft.')",
+                                            "type": "If"
+                                        }
+                                    },
+                                    "runAfter": {
+                                        "List_resource_providers": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "type": "Foreach"
+                                }
+                            },
+                            "runAfter": {
+                                "List_subscriptions": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Foreach"
+                        }
+                    },
+                    "outputs": {}
+                },
+                "parameters": {
+                    "$connections": {
+                        "value": {
+                            "arm": {
+                                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('logicAppLocation'), '/managedApis/', 'arm')]",
+                                "connectionId": "[resourceId('Microsoft.Web/connections', parameters('arm_Connection_Name'))]",
+                                "connectionName": "[parameters('arm_Connection_Name')]"
+                            }
+                        }
+                    }
+                },
+                "runtimeConfiguration": {
+                    "collections": {
+                        "maximumItemCount": 5000
+                    }
+                }
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.Web/connections', parameters('arm_Connection_Name'))]"
+            ]
+        },
+        {
+            "type": "Microsoft.Web/connections",
+            "name": "[parameters('arm_Connection_Name')]",
+            "apiVersion": "2016-06-01",
+            "location": "[parameters('logicAppLocation')]",
+            "properties": {
+                "api": {
+                    "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('logicAppLocation'), '/managedApis/', 'arm')]"
+                },
+                "displayName": "[parameters('arm_Connection_Name')]"
+            }
+        }
+    ]
+}
